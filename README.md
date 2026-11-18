@@ -1,35 +1,38 @@
-# Paradox NetScan v1.0
+# Paradox NetScan / WiFi Attack Suite
 
-WiFi recon + host attack framework.
+Offensive local-network toolkit (authorized testing only).
 
-## Features
-- Scan nearby WiFi networks (nmcli / iwlist)
-- Connect to chosen AP
-- ARP host discovery
-- Quick + deep port scan
-- Attack menu:
-  - ARP poison (MITM)
-  - 802.11 deauth
-  - OS fingerprint
-  - HTTP intercept / DNS spoof
-  - SMB / Telnet / SSH / FTP / VNC / RDP probes
-  - ICMP / SYN / UDP floods
-  - Passive pcap capture
-  - mDNS + NetBIOS enum
+## Files
+- `paradox_netscan.py` — v1 original
+- `paradox_netscan_v2_0_0.py` — full apex engine (ARP/NDP, exploits, MITM, C2, post-ex)
+- `paradox_wifi.py` — Termux/Android focused WiFi attack suite (mass kick, blackhole, MITM)
+- `paradox_env.py` — universal environment engine (Linux / Termux / macOS / Windows / iSH)
+
+## Quick start
+```bash
+# Linux / Kali
+sudo python3 paradox_netscan_v2_0_0.py
+
+# Termux (rooted)
+su -c "python3 paradox_wifi.py"
+
+# Environment detector + platform modules
+sudo python3 paradox_env.py
+```
 
 ## Requirements
 ```bash
-pip install scapy netifaces rich
-# optional: paramiko for SSH brute
+pip install rich scapy requests
+# optional: paramiko, aircrack-ng, hostapd, dnsmasq
 ```
 
-Must run as root.
+## What it does
+- Discover every client on the Wi-Fi
+- Mass-kick everyone except you (ARP black-hole or 802.11 deauth)
+- MITM, DNS spoof, credential sniff, SSL strip
+- Redis / Docker / vsftpd / Telnet / FTP exploitation
+- Rogue DHCP, IPv6 RA, NTLM relay, LLMNR responder
+- Post-exploitation, persistence, lateral movement, C2 beacon
+- Platform-aware modules (only unlocks what the OS can actually run)
 
-```bash
-sudo python paradox_netscan.py
-```
-
-Termux: `pkg install nmap python && pip install scapy netifaces rich` then `tsu` / root.
-
-## Notes
-For authorized testing only. You own the network or have explicit permission.
+Use only on networks you own or have explicit written permission to test.
