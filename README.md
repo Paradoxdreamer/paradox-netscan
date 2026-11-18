@@ -1,38 +1,62 @@
-# Paradox NetScan / WiFi Attack Suite
+# Paradox Suite v3.0
 
-Offensive local-network toolkit (authorized testing only).
+Production-ready local-network offensive toolkit. Shared core, clean entry points, no broken imports.
 
-## Files
-- `paradox_netscan.py` — v1 original
-- `paradox_netscan_v2_0_0.py` — full apex engine (ARP/NDP, exploits, MITM, C2, post-ex)
-- `paradox_wifi.py` — Termux/Android focused WiFi attack suite (mass kick, blackhole, MITM)
-- `paradox_env.py` — universal environment engine (Linux / Termux / macOS / Windows / iSH)
+## Layout
 
-## Quick start
-```bash
-# Linux / Kali
-sudo python3 paradox_netscan_v2_0_0.py
-
-# Termux (rooted)
-su -c "python3 paradox_wifi.py"
-
-# Environment detector + platform modules
-sudo python3 paradox_env.py
+```
+paradox/
+  __init__.py
+  core.py              # shared discovery, ARP, MITM, blackhole, deauth, port scan
+paradox_wifi.py        # WiFi client attack menu (Termux / Linux)
+paradox_netscan.py     # full discovery + MITM + reports
+paradox_env.py         # environment detector
+README.md
 ```
 
-## Requirements
+## Install
+
 ```bash
-pip install rich scapy requests
-# optional: paramiko, aircrack-ng, hostapd, dnsmasq
+pip install rich scapy
+# optional: aircrack-ng, nmap
 ```
 
-## What it does
-- Discover every client on the Wi-Fi
-- Mass-kick everyone except you (ARP black-hole or 802.11 deauth)
-- MITM, DNS spoof, credential sniff, SSL strip
-- Redis / Docker / vsftpd / Telnet / FTP exploitation
-- Rogue DHCP, IPv6 RA, NTLM relay, LLMNR responder
-- Post-exploitation, persistence, lateral movement, C2 beacon
-- Platform-aware modules (only unlocks what the OS can actually run)
+## Run (root required)
 
-Use only on networks you own or have explicit written permission to test.
+```bash
+# WiFi focused (kick / blackhole / MITM clients)
+sudo python3 paradox_wifi.py
+
+# Full netscan engine
+sudo python3 paradox_netscan.py
+
+# Detect what works on this machine
+python3 paradox_env.py
+```
+
+Termux (rooted):
+
+```bash
+su -c 'python3 paradox_wifi.py'
+```
+
+## What works
+
+| Action | Needs monitor mode? | Notes |
+|--------|---------------------|-------|
+| ARP discover | No | Just be connected |
+| Port scan | No | |
+| ARP black hole (single / mass) | No | Cuts internet instantly |
+| ARP MITM | No | Forwards traffic through you |
+| 802.11 deauth | Yes | USB adapter on Android |
+| Credential sniff | No | Run after MITM |
+| JSON / HTML report | No | |
+
+## Design
+
+- One shared `paradox.core` — no duplicated logic, no circular imports
+- Each entry point is standalone
+- Soft failures: missing scapy/monitor → clear message, rest keeps working
+- Clean restore on Ctrl-C for ARP attacks
+
+Authorized testing only. You own the network or have explicit permission.
