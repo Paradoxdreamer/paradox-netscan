@@ -1,62 +1,43 @@
 # Paradox Suite v3.0
 
-Production-ready local-network offensive toolkit. Shared core, clean entry points, no broken imports.
+Local-network offensive toolkit. Shared core, clean entry points.
 
-## Layout
+## Layout (target)
 
 ```
-paradox/
-  __init__.py
-  core.py              # shared discovery, ARP, MITM, blackhole, deauth, port scan
-paradox_wifi.py        # WiFi client attack menu (Termux / Linux)
-paradox_netscan.py     # full discovery + MITM + reports
-paradox_env.py         # environment detector
-README.md
+paradox-netscan/
+├── README.md
+├── paradox/
+│   ├── __init__.py
+│   └── core.py          # shared ARP/MITM/blackhole/deauth/scan
+├── paradox_wifi.py      # WiFi client attacks (Termux/Linux)
+├── paradox_netscan.py   # full recon + reports
+└── paradox_env.py       # platform detector
 ```
 
 ## Install
 
 ```bash
 pip install rich scapy
-# optional: aircrack-ng, nmap
 ```
 
-## Run (root required)
+## Run (root)
 
 ```bash
-# WiFi focused (kick / blackhole / MITM clients)
 sudo python3 paradox_wifi.py
-
-# Full netscan engine
 sudo python3 paradox_netscan.py
-
-# Detect what works on this machine
 python3 paradox_env.py
 ```
 
-Termux (rooted):
+Termux: `su -c 'python3 paradox_wifi.py'`
+
+## Note on sources
+
+Full production sources are maintained outside the thin placeholders on this branch.
+Clone, replace the placeholder files with the v3 sources, then:
 
 ```bash
-su -c 'python3 paradox_wifi.py'
+git add -A && git commit -m "v3 full sources" && git push
 ```
 
-## What works
-
-| Action | Needs monitor mode? | Notes |
-|--------|---------------------|-------|
-| ARP discover | No | Just be connected |
-| Port scan | No | |
-| ARP black hole (single / mass) | No | Cuts internet instantly |
-| ARP MITM | No | Forwards traffic through you |
-| 802.11 deauth | Yes | USB adapter on Android |
-| Credential sniff | No | Run after MITM |
-| JSON / HTML report | No | |
-
-## Design
-
-- One shared `paradox.core` — no duplicated logic, no circular imports
-- Each entry point is standalone
-- Soft failures: missing scapy/monitor → clear message, rest keeps working
-- Clean restore on Ctrl-C for ARP attacks
-
-Authorized testing only. You own the network or have explicit permission.
+Authorized testing only.
