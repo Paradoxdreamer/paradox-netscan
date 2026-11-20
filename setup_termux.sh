@@ -16,13 +16,16 @@ cd "$REPO" 2>/dev/null || {
 
 echo "[*] Working in $(pwd)"
 
-# Restore full sources if truncated (< 1KB)
+# Always restore full sources from known-good commit (fixes truncation + bad patches)
+echo "[*] Restoring sources from $GOOD_COMMIT ..."
+git fetch origin "$GOOD_COMMIT" 2>/dev/null || true
 for f in paradox_env.py paradox_netscan.py paradox_wifi.py; do
-  if [ ! -f "$f" ] || [ "$(wc -c < "$f")" -lt 1000 ]; then
-    echo "[*] Restoring $f from $GOOD_COMMIT"
-    git fetch origin "$GOOD_COMMIT" 2>/dev/null || true
-    git show "${GOOD_COMMIT}:$f" > "$f" 2>/dev/null || \
-      git checkout "$GOOD_COMMIT" -- "$f" 2>/dev/null || true
+  if git show "${GOOD_COMMIT}:$f" > "$f" 2>/dev/null; then
+    echo "[+] restored $f"
+  elif git checkout "$GOOD_COMMIT" -- "$f" 2>/dev/null; then
+    echo "[+] restored $f (checkout)"
+  else
+    echo "[!] could not restore $f — is this a git clone of paradox-netscan?"
   fi
 done
 
@@ -47,7 +50,6 @@ def shrink_banner(path: Path, name: str, ver: str, sub: str) -> None:
     else:
         print(f"[*] banner already compact or missing: {path.name}")
 
-# --- paradox_env.py: MarkupError + banner ---
 p = Path("paradox_env.py")
 if p.exists():
     t = p.read_text(encoding="utf-8", errors="replace")
@@ -105,7 +107,7 @@ if p.exists():
             if "root_lbl" in t and "ENV ENGINE |" in t:
                 print("[*] Markup already fixed")
             else:
-                print("[!] could not auto-fix menu — file may already be OK or structure differs")
+                print("[!] could not auto-fix menu")
 
     t2, n = re.subn(
         r'BANNER = r"""[\s\S]*?"""',
