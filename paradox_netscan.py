@@ -36,17 +36,18 @@ except ImportError:
 console = Console()
 
 BANNER = r"""
-[bold red]
- ██████╗  █████╗ ██████╗  █████╗ ██████╗   ██████╗ ███████╗
- ██╔══██╗██╔══██╗██╔══██╗██╔══██╗██╔══██╗ ██╔═══██╗██╔════╝
- ██████╔╝███████║██████╔╝███████║██║  ██║ ██║   ██║███████╗
- ██╔═══╝ ██╔══██║██╔══██╗██╔══██║██║  ██║ ██║   ██║╚════██║
- ██║     ██║  ██║██║  ██║██║  ██║██████╔╝ ╚██████╔╝███████║
- ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝   ╚═════╝ ╚══════╝
-[/bold red]
-[bold yellow] PARADOX TECH NETSCAN v2.0.0  |  Apex Offensive Engine  |  2026/2027[/bold yellow]
-[dim] ARP/NDP · OS fingerprint · banner · CVE live+static · vsftpd/Redis/Docker RCE
- NTLM relay · SSL strip · IPv6 RA · C2 beacon · covert channel · post-exploitation[/dim]
+[bold red]             ⛧  P A R A D O X   T E C H  ⛧[/bold red]
+[bold white]
+   ██████╗  █████╗ ██████╗  █████╗ ██████╗  ██████╗ ██╗  ██╗
+   ██╔══██╗██╔══██╗██╔══██╗██╔══██╗╚════██╗██╔═══██╗╚██╗██╔╝
+   ██████╔╝███████║██████╔╝███████║ █████╔╝██║   ██║ ╚███╔╝
+   ██╔═══╝ ██╔══██║██╔══██╗██╔══██║██╔═══╝ ██║   ██║ ██╔██╗
+   ██║     ██║  ██║██║  ██║██║  ██║███████╗╚██████╔╝██╔╝ ██╗
+   ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝
+[/bold white]
+[bold red]                 N E T S C A N  ·  v2.0.0[/bold red]
+[dim]       NETWORK DISCOVERY  /  SECURITY ASSESSMENT[/dim]
+[dim]       PARADOX TECHNOLOGY DIVISION  ·  PARADOX SYSTEMS[/dim]
 """
 
 VERSION   = "2.0.0"
