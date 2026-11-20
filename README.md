@@ -1,184 +1,82 @@
-<div align="center">
-
-<img src="https://tmpfiles.org/dl/wcAJXIoZ7Ucp/paradox.jpg" width="320" alt="Paradox NetScan"/>
-
 # Paradox NetScan
 
-Layout: see the repository structure below. Source: [paradox-netscan](https://github.com/Paradoxdreamer/paradox-netscan).
+**See the network. Understand the system.**
 
-**See the network. Understand the system.**  
-*Every signal leaves a story.*
+Python network research toolkit — discovery, host inspection, Wi‑Fi research, environment capability matrix.
 
-<br/>
-
-<a href="https://github.com/Paradoxdreamer/paradox-netscan">
-  <img src="https://img.shields.io/badge/status-experimental-0A2540?style=for-the-badge" alt="status"/>
-</a>
-<a href="#">
-  <img src="https://img.shields.io/badge/python-3.x-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="python"/>
-</a>
-<a href="#">
-  <img src="https://img.shields.io/badge/network-research-00A896?style=for-the-badge" alt="network research"/>
-</a>
-<a href="#">
-  <img src="https://img.shields.io/badge/platform-linux%20%7C%20termux-339933?style=for-the-badge" alt="platform"/>
-</a>
-
-<br/>
-
-<sub>Python · local-network discovery · host inspection · service visibility · reporting</sub>
-
-</div>
+| Module | File | What it does |
+|--------|------|----------------|
+| Env Engine | `paradox_env.py` | Detect OS/root/capabilities → interactive menu |
+| NetScan | `paradox_netscan.py` | LAN discovery, ports, services, assessment |
+| Wi‑Fi | `paradox_wifi.py` | Wireless visibility / assessment |
 
 ---
 
-<details open>
-<summary><b>// this is</b></summary>
-<br/>
+## Quick start (clone → run)
 
-**Paradox NetScan** is a Python-based network research project built under **Paradox Tech**.
-
-It brings local-network discovery, host inspection, service visibility, and reporting concepts into one codebase.
-
-| thing | reality |
-|:------|:--------|
-| discovery | local network device discovery |
-| inspection | basic host and network information |
-| services | visibility into detected network services |
-| fingerprinting | heuristic device characteristics |
-| reports | structured findings and report output |
-| environment | runtime and dependency checks |
-
-This repository is experimental. Some code paths are capable of interfering with network traffic. Review the source carefully; do not run interception or disruption components.
-
-</details>
-
----
-
-<details>
-<summary><b>// quick start (read before running)</b></summary>
-<br/>
-
-Clone the repository:
+### Linux / Kali / Parrot
 
 ```bash
 git clone https://github.com/Paradoxdreamer/paradox-netscan.git
 cd paradox-netscan
+pip install rich scapy requests
+python3 paradox_env.py          # banner + capability menu
+python3 paradox_netscan.py      # main netscan menu
+python3 paradox_wifi.py         # wifi menu
 ```
 
-Install the documented Python dependencies:
+### Termux (Android)
 
 ```bash
-pip install rich scapy
+pkg update
+pkg install -y git python clang libxml2 libxslt
+pip install rich scapy requests
+
+git clone https://github.com/Paradoxdreamer/paradox-netscan.git
+cd paradox-netscan
+
+# Restore full sources + fix MarkupError + compact banners:
+bash setup_termux.sh
+# or:
+# curl -sL https://raw.githubusercontent.com/Paradoxdreamer/paradox-netscan/main/setup_termux.sh | bash
+
+python paradox_env.py
+python paradox_netscan.py
+python paradox_wifi.py
 ```
 
-Check the environment:
+**Root note (Termux):** Without root, ARP/Scapy raw sockets, monitor mode, and injection stay blocked. Env menu and limited TCP checks still work. Use a rooted device or a Linux box for full features.
+
+---
+
+## Commands cheat sheet
+
+| Goal | Command |
+|------|---------|
+| Environment / capability menu | `python3 paradox_env.py` |
+| Network assessment menu | `python3 paradox_netscan.py` |
+| Wi‑Fi research menu | `python3 paradox_wifi.py` |
+| Fix Rich MarkupError only | `bash fix_markup_now.sh` |
+| Full Termux restore + fix | `bash setup_termux.sh` |
+
+After launch you should see a **compact 2‑line banner** and an interactive menu (not a crash).
+
+---
+
+## Dependencies
 
 ```bash
-python3 paradox_env.py
+pip install rich scapy requests
 ```
 
-**Important:** The network-interference and traffic-manipulation portions are not a general-purpose feature set. Do not execute those components on live networks. Use only a controlled lab that you own and are authorized to assess.
-
-</details>
+Optional system tools (Linux): `nmap`, `aircrack-ng`, `hostapd`, `dnsmasq`.
 
 ---
 
-<details>
-<summary><b>// modules (the moving parts)</b></summary>
-<br/>
+## Responsible use
 
-```text
-paradox-netscan/
-│
-├── paradox/
-│   ├── __init__.py
-│   └── core.py
-│
-├── paradox_netscan.py
-├── paradox_wifi.py
-├── paradox_env.py
-└── README.md
-```
-
-| file | responsibility |
-|:-----|:---------------|
-| `paradox/core.py` | Shared network-related components. |
-| `paradox_netscan.py` | Main network assessment entry point. |
-| `paradox_wifi.py` | Wi-Fi research entry point. |
-| `paradox_env.py` | Runtime and environment detection. |
-
-</details>
+Only use on networks and devices you own or have explicit permission to test. Traffic interception and disruption features are for controlled labs only.
 
 ---
 
-<details>
-<summary><b>// architecture</b></summary>
-<br/>
-
-```text
-             PARADOX NETSCAN
-                    │
-             ┌──────┴──────┐
-             ▼             ▼
-        Shared Core   Environment
-             │          Check
-       ┌─────┼─────┐
-       ▼     ▼     ▼
-   Discovery Host  Reports
-           Review
-```
-
-One shared core keeps common components together, while separate entry points organize the project's different areas.
-
-</details>
-
----
-
-<details>
-<summary><b>// known vibes</b></summary>
-<br/>
-
-| works best when… | might get messy if… |
-|:----------------|:--------------------|
-| dependencies are installed | Scapy or system permissions are missing |
-| used in an isolated lab | run against networks without authorization |
-| results are independently verified | heuristics are treated as proof |
-| source is reviewed first | experimental components are assumed production-ready |
-
-Network fingerprints and port observations are clues, not definitive proof of device identity or vulnerability.
-
-</details>
-
----
-
-<details>
-<summary><b>// responsible use (read this)</b></summary>
-<br/>
-
-- Assess only networks and devices you own or have explicit permission to test.
-- Do not use traffic interception, credential collection, or disruption features on live networks.
-- Keep experiments isolated and reversible.
-- Verify findings before drawing security conclusions.
-
-</details>
-
----
-
-<div align="center">
-
-<br/>
-
-**Powered by: paradox overlord**
-
-<sub>PARADOX TECH · © 2026 PARADOX CLAN / All Rights Reserved.</sub>
-
-<br/>
-
-```text
-Built with curiosity.
-Refined through failure.
-Shipped anyway.
-```
-
-</div>
+**Paradox Tech · 2026**
