@@ -33,15 +33,18 @@ except ImportError:
 console = Console()
 
 BANNER = r"""
-[bold red]
-  ██╗    ██╗██╗███████╗██╗      ██████╗  █████╗ ██████╗ 
-  ██║    ██║██║██╔════╝██║     ██╔═══██╗██╔══██╗██╔══██╗
-  ██║ █╗ ██║██║█████╗  ██║     ██║   ██║███████║██║  ██║
-  ██║███╗██║██║██╔══╝  ██║     ██║   ██║██╔══██║██║  ██║
-  ╚███╔███╔╝██║██║     ██║     ╚██████╔╝██║  ██║██████╔╝
-   ╚══╝╚══╝ ╚═╝╚═╝     ╚═╝      ╚═════╝ ╚═╝  ╚═╝╚═════╝ [/bold red]
-[bold yellow]  PARADOX WIFI ATTACK SUITE  |  Termux Edition  |  v1.0[/bold yellow]
-[dim]  Connect to any WiFi → discover clients → own the network[/dim]
+[bold red]             ⛧  P A R A D O X   T E C H  ⛧[/bold red]
+[bold white]
+   ██████╗  █████╗ ██████╗  █████╗ ██████╗  ██████╗ ██╗  ██╗
+   ██╔══██╗██╔══██╗██╔══██╗██╔══██╗╚════██╗██╔═══██╗╚██╗██╔╝
+   ██████╔╝███████║██████╔╝███████║ █████╔╝██║   ██║ ╚███╔╝
+   ██╔═══╝ ██╔══██║██╔══██╗██╔══██║██╔═══╝ ██║   ██║ ██╔██╗
+   ██║     ██║  ██║██║  ██║██║  ██║███████╗╚██████╔╝██╔╝ ██╗
+   ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝
+[/bold white]
+[bold red]                 W I F I  ·  v1.0[/bold red]
+[dim]       WIRELESS NETWORK VISIBILITY & ASSESSMENT[/dim]
+[dim]       PARADOX TECHNOLOGY DIVISION  ·  PARADOX SYSTEMS[/dim]
 """
 
 # ─── WiFi Client Data ─────────────────────────────────────────────────────────
