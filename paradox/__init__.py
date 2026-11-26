@@ -1,3 +1,3 @@
-#Yours verily Paradox Clan 
-__version__ = "3.0.0"
-__all__ = ["core", "wifi", "netscan", "env"]
+# Paradox Tech 2026
+__version__ = "4.0.0"
+__all__     = ["core", "attacks"]

