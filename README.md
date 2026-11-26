@@ -2,64 +2,36 @@
 
 **See the network. Understand the system.**
 
-Python network research toolkit — discovery, host inspection, Wi‑Fi research, environment capability matrix.
+Python network discovery, assessment and attack toolkit — v4.0.0, packaged and clean.
 
 | Module | File | What it does |
 |--------|------|----------------|
-| Env Engine | `paradox_env.py` | Detect OS/root/capabilities → interactive menu |
-| NetScan | `paradox_netscan.py` | LAN discovery, ports, services, assessment |
-| Wi‑Fi | `paradox_wifi.py` | Wireless visibility / assessment |
+| Core | `paradox/core.py` | Host/NetworkInfo models, OUI lookup, ARP discovery, adaptive port scan, core attack primitives |
+| Attacks | `paradox/attacks.py` | MITM + sniffer, DNS spoof, TCP RST injection, SYN/UDP floods, DHCP starvation, ICMP redirect, evil twin, ARP storm, passive discovery, knock detector |
+| Entry | `paradox_netscan.py` | Interactive menu — discovery · assessment · attacks |
 
 ---
 
-## Quick start (clone → run)
-
-### Linux / Kali / Parrot
+## Quick start
 
 ```bash
 git clone https://github.com/Paradoxdreamer/paradox-netscan.git
 cd paradox-netscan
 pip install rich scapy requests
-python3 paradox_env.py          # banner + capability menu
-python3 paradox_netscan.py      # main netscan menu
-python3 paradox_wifi.py         # wifi menu
+sudo python3 paradox_netscan.py
 ```
 
-### Termux (Android)
-
-```bash
-pkg update
-pkg install -y git python clang libxml2 libxslt
-pip install rich scapy requests
-
-git clone https://github.com/Paradoxdreamer/paradox-netscan.git
-cd paradox-netscan
-
-# Restore full sources + fix MarkupError + compact banners:
-bash setup_termux.sh
-# or:
-# curl -sL https://raw.githubusercontent.com/Paradoxdreamer/paradox-netscan/main/setup_termux.sh | bash
-
-python paradox_env.py
-python paradox_netscan.py
-python paradox_wifi.py
-```
-
-**Root note (Termux):** Without root, ARP/Scapy raw sockets, monitor mode, and injection stay blocked. Env menu and limited TCP checks still work. Use a rooted device or a Linux box for full features.
+Root required for raw sockets, ARP, monitor mode and injection. Port scans and passive discovery work without it.
 
 ---
 
-## Commands cheat sheet
+## Menu
 
-| Goal | Command |
-|------|---------|
-| Environment / capability menu | `python3 paradox_env.py` |
-| Network assessment menu | `python3 paradox_netscan.py` |
-| Wi‑Fi research menu | `python3 paradox_wifi.py` |
-| Fix Rich MarkupError only | `bash fix_markup_now.sh` |
-| Full Termux restore + fix | `bash setup_termux.sh` |
+**Discovery** — ARP scan, passive discovery (zero packets sent), ARP storm, host details, common + full port scans, security assessment with CVE lookup, network info.
 
-After launch you should see a **compact 2‑line banner** and an interactive menu (not a crash).
+**Attacks** — A1 ARP MITM + sniffer (HTTP / DNS / TLS SNI / cookies / credentials) · A2 DNS spoof with catch-all · A3/A4 ARP blackhole single + mass · A5 TCP RST injection with sequence prediction · A6 multi-threaded SYN flood with live pps tracking · A7 raw UDP flood · A8 DHCP starvation with spoofed MACs · A9 ICMP redirect · A10 Wi-Fi deauth (monitor mode) · A11 evil twin AP (hostapd + dnsmasq) · AK port knock detector.
+
+**Other** — JSON report export.
 
 ---
 
@@ -69,7 +41,9 @@ After launch you should see a **compact 2‑line banner** and an interactive men
 pip install rich scapy requests
 ```
 
-Optional system tools (Linux): `nmap`, `aircrack-ng`, `hostapd`, `dnsmasq`.
+Optional system tools (Linux): `nmap`, `aircrack-ng`, `hostapd`, `dnsmasq`, `iw`.
+
+Works on Linux / Kali / Parrot. Android Termux works for TCP-side features only — raw sockets and monitor mode need root.
 
 ---
 
